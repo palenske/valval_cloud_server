@@ -15,7 +15,7 @@ ROLE_NAME="SSMRoleForEC2"
 # Nome do perfil de instância
 INSTANCE_PROFILE_NAME="ValheimSSMInstanceProfile"
 
-# Configuração do servidor Valheim
+# Configurações do servidor
 SERVER_NAME="MeuServerValheim"
 WORLD_NAME="meu_mundo"
 SERVER_PASS="minhasenha"
@@ -25,7 +25,7 @@ if aws iam get-role --role-name "$ROLE_NAME" --region "$REGION" &> /dev/null; th
     echo "A role IAM '$ROLE_NAME' já existe."
 else
     aws iam create-role --role-name "$ROLE_NAME" \
-        --assume-role-policy-document file://data/ec2-role-policy.json \
+        --assume-role-policy-document file://./ec2-role-policy.json \
         --region "$REGION"
     
     aws iam attach-role-policy --role-name "$ROLE_NAME" \
@@ -56,7 +56,7 @@ else
     echo "O grupo de segurança '$SECURITY_GROUP_NAME' já existe. Usando ID: $SG_ID"
 fi
 
-# Criar uma instância EC2 com Docker, SSM ativado e SSM Agent instalado
+# Criar uma instância EC2 com Docker e SSM ativado
 INSTANCE_ID=$(aws ec2 run-instances \
     --image-id "$AMI_ID" \
     --count 1 \
@@ -65,30 +65,57 @@ INSTANCE_ID=$(aws ec2 run-instances \
     --iam-instance-profile Name="$INSTANCE_PROFILE_NAME" \
     --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$INSTANCE_NAME}]" \
     --user-data "#!/bin/bash
-                 SERVER_NAME='$SERVER_NAME'
-                 WORLD_NAME='$WORLD_NAME'
-                 SERVER_PASS='$SERVER_PASS'
-
-                 # Atualizar pacotes
+                 # Instalação do Docker e do cron
                  sudo apt-get update -y
-
-                 # Instalar Docker
                  sudo apt-get install docker.io -y
+                 sudo apt-get install cron -y
                  sudo systemctl start docker
                  sudo systemctl enable docker
 
-                 # Instalar o SSM Agent (caso não esteja instalado)
-                 sudo snap install amazon-ssm-agent --classic
-                 sudo systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent
-                 sudo systemctl start snap.amazon-ssm-agent.amazon-ssm-agent
-
-                 # Executar o servidor Valheim no Docker
+                 # Rodando o servidor Valheim
+                 SERVER_NAME='$SERVER_NAME'
+                 WORLD_NAME='$WORLD_NAME'
+                 SERVER_PASS='$SERVER_PASS'
+                 
                  sudo docker run -d --name valheim-server \
                    -p 2456-2458:2456-2458/udp \
                    -e SERVER_NAME=\$SERVER_NAME \
                    -e WORLD_NAME=\$WORLD_NAME \
                    -e SERVER_PASS=\$SERVER_PASS \
-                   lloesche/valheim-server" \
+                   lloesche/valheim-server
+
+                 # Script de verificação de inatividade
+                 echo '#!/bin/bash
+                 REGION=\"us-east-1\"
+                 INSTANCE_ID=\$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+                 PLAYERS_CONNECTED=\$(sudo docker logs valheim-server 2>&1 | grep -i \"Got handshake from client\" | wc -l)
+                 
+                 if [ \"\$PLAYERS_CONNECTED\" -eq 0 ]; then
+                     echo \"Nenhum jogador ativo no momento. Aguardando 1 hora para nova verificação...\"
+                     sleep 3600
+                     PLAYERS_CONNECTED=\$(sudo docker logs valheim-server 2>&1 | grep -i \"Got handshake from client\" | wc -l)
+                     if [ \"\$PLAYERS_CONNECTED\" -eq 0 ]; then
+                         echo \"Sem jogadores ativos por mais de 1 hora. Desligando a instância...\"
+                         INSTANCE_STATE=\$(aws ec2 describe-instances --instance-ids \$INSTANCE_ID --query \"Reservations[0].Instances[0].State.Name\" --output text --region \$REGION)
+                         if [ \"\$INSTANCE_STATE\" == \"running\" ]; then
+                             aws ec2 stop-instances --instance-ids \$INSTANCE_ID --region \$REGION
+                             echo \"Instância desligada com sucesso.\"
+                         else
+                             echo \"A instância já está parada.\"
+                         fi
+                     else
+                         echo \"Jogadores conectados detectados. O servidor permanecerá ligado.\"
+                     fi
+                 else
+                     echo \"Jogadores conectados detectados. O servidor permanecerá ligado.\"
+                 fi' | sudo tee /usr/local/bin/check_valheim_inactivity.sh
+
+                 # Tornar o script executável
+                 sudo chmod +x /usr/local/bin/check_valheim_inactivity.sh
+
+                 # Adicionando cron job para executar o script a cada 15 minutos
+                 (crontab -l 2>/dev/null; echo \"*/15 * * * * /usr/local/bin/check_valheim_inactivity.sh >> /var/log/valheim_check.log 2>&1\") | sudo crontab -
+                " \
     --output text --query 'Instances[0].InstanceId' --region "$REGION")
 
 # Verificar se a instância foi criada com sucesso
