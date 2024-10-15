@@ -10,6 +10,7 @@ INSTANCE_TYPE="t3.micro"
 SECURITY_GROUP_NAME="valheim-sg"
 REGION="us-east-1"
 ROLE_NAME="SSMRoleForEC2"
+INSTANCE_PROFILE_NAME="ValheimSSMInstanceProfile"  # Nome do perfil de instância
 
 # Verificar se a role já existe
 if ! aws iam get-role --role-name $ROLE_NAME --region $REGION >/dev/null 2>&1; then
@@ -28,15 +29,26 @@ if ! aws iam get-role --role-name $ROLE_NAME --region $REGION >/dev/null 2>&1; t
     }')
     # Associar políticas gerenciadas para o SSM à role criada
     aws iam attach-role-policy --role-name $ROLE_NAME --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-else
-    echo "A role $ROLE_NAME já existe. Prosseguindo..."
 fi
 
-# Criar grupo de segurança para permitir tráfego nas portas do Valheim (2456-2458)
-SG_ID=$(aws ec2 create-security-group --group-name $SECURITY_GROUP_NAME --description "SG for Valheim Server" --output text --query 'GroupId' --region $REGION)
+# Criar um perfil de instância se ele não existir
+if ! aws iam get-instance-profile --instance-profile-name $INSTANCE_PROFILE_NAME --region $REGION >/dev/null 2>&1; then
+    aws iam create-instance-profile --instance-profile-name $INSTANCE_PROFILE_NAME --region $REGION
+    aws iam add-role-to-instance-profile --instance-profile-name $INSTANCE_PROFILE_NAME --role-name $ROLE_NAME --region $REGION
+fi
 
-# Configurar regras do grupo de segurança (não precisa abrir a porta 22 para SSH, já que usaremos SSM)
-aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol udp --port 2456-2458 --cidr 0.0.0.0/0 --region $REGION
+# Verificar se o grupo de segurança já existe e obter seu ID
+SG_ID=$(aws ec2 describe-security-groups --filters Name=group-name,Values=$SECURITY_GROUP_NAME --query 'SecurityGroups[0].GroupId' --output text --region $REGION)
+
+if [ "$SG_ID" == "None" ]; then
+    # Criar grupo de segurança para permitir tráfego nas portas do Valheim (2456-2458)
+    SG_ID=$(aws ec2 create-security-group --group-name $SECURITY_GROUP_NAME --description "SG for Valheim Server" --output text --query 'GroupId' --region $REGION)
+    
+    # Configurar regras do grupo de segurança
+    aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol udp --port 2456-2458 --cidr 0.0.0.0/0 --region $REGION
+else
+    echo "O grupo de segurança '$SECURITY_GROUP_NAME' já existe. Usando ID: $SG_ID"
+fi
 
 # Criar uma instância EC2 com Docker e SSM ativado
 INSTANCE_ID=$(aws ec2 run-instances \
@@ -44,7 +56,7 @@ INSTANCE_ID=$(aws ec2 run-instances \
     --count 1 \
     --instance-type $INSTANCE_TYPE \
     --security-group-ids $SG_ID \
-    --iam-instance-profile Name=$ROLE_NAME \
+    --iam-instance-profile Name=$INSTANCE_PROFILE_NAME \
     --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$INSTANCE_NAME}]" \
     --user-data '#!/bin/bash
                  sudo apt-get update -y
