@@ -15,7 +15,7 @@ ROLE_NAME="SSMRoleForEC2"
 # Nome do perfil de instância
 INSTANCE_PROFILE_NAME="ValheimSSMInstanceProfile"
 
-# Config servidor
+# Configuração do servidor Valheim
 SERVER_NAME="MeuServerValheim"
 WORLD_NAME="meu_mundo"
 SERVER_PASS="minhasenha"
@@ -56,7 +56,7 @@ else
     echo "O grupo de segurança '$SECURITY_GROUP_NAME' já existe. Usando ID: $SG_ID"
 fi
 
-# Criar uma instância EC2 com Docker e SSM ativado
+# Criar uma instância EC2 com Docker, SSM ativado e SSM Agent instalado
 INSTANCE_ID=$(aws ec2 run-instances \
     --image-id "$AMI_ID" \
     --count 1 \
@@ -68,11 +68,21 @@ INSTANCE_ID=$(aws ec2 run-instances \
                  SERVER_NAME='$SERVER_NAME'
                  WORLD_NAME='$WORLD_NAME'
                  SERVER_PASS='$SERVER_PASS'
-                 
+
+                 # Atualizar pacotes
                  sudo apt-get update -y
+
+                 # Instalar Docker
                  sudo apt-get install docker.io -y
                  sudo systemctl start docker
                  sudo systemctl enable docker
+
+                 # Instalar o SSM Agent (caso não esteja instalado)
+                 sudo snap install amazon-ssm-agent --classic
+                 sudo systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent
+                 sudo systemctl start snap.amazon-ssm-agent.amazon-ssm-agent
+
+                 # Executar o servidor Valheim no Docker
                  sudo docker run -d --name valheim-server \
                    -p 2456-2458:2456-2458/udp \
                    -e SERVER_NAME=\$SERVER_NAME \
