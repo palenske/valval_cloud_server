@@ -16,9 +16,9 @@ ROLE_NAME="SSMRoleForEC2"
 INSTANCE_PROFILE_NAME="ValheimSSMInstanceProfile"
 
 # Configurações do servidor
-SERVER_NAME="MeuServerValheim"
-WORLD_NAME="meu_mundo"
-SERVER_PASS="minhasenha"
+SERVER_NAME="valvala_server"
+WORLD_NAME="valvala"
+SERVER_PASS="batata123"
 
 # Verificar se a role IAM já existe
 if aws iam get-role --role-name "$ROLE_NAME" --region "$REGION" &> /dev/null; then
