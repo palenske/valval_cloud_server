@@ -65,12 +65,15 @@ INSTANCE_ID=$(aws ec2 run-instances \
     --iam-instance-profile Name="$INSTANCE_PROFILE_NAME" \
     --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$INSTANCE_NAME}]" \
     --user-data "#!/bin/bash
-                 # Instalação do Docker e do cron
+                 # Instalação do Docker / do cron e ssm
                  sudo apt-get update -y
+                 sudo snap install amazon-ssm-agent --classic
                  sudo apt-get install docker.io -y
                  sudo apt-get install cron -y
-                 sudo systemctl start docker
+                 sudo systemctl enable amazon-ssm-agent
+                 sudo systemctl start amazon-ssm-agent
                  sudo systemctl enable docker
+                 sudo systemctl start docker
 
                  # Rodando o servidor Valheim
                  SERVER_NAME='$SERVER_NAME'
